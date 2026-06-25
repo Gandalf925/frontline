@@ -1,0 +1,13 @@
+{
+  "name": "frontline-roads-refactor",
+  "version": "0.33.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=4",
+    "syntax": "find src tests tools -type f \\( -name '*.js' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check && node --check sw.js",
+    "verify": "npm run syntax && npm test",
+    "playtest:balance": "node tools/playtest-balance-v03212.mjs",
+    "playtest:civilization": "node tools/playtest-civilization-v0330.mjs"
+  }
+}

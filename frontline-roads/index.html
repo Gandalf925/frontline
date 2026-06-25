@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#010807">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <title>FRONTLINE ROADS</title>
+  <style id="criticalStyles">
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #010807; color: #dffdf4; font-family: ui-monospace, monospace; }
+    [hidden] { display: none !important; }
+    #assetRecovery { position: fixed; z-index: 9999; inset: 0; display: grid; place-items: center; padding: 24px; background: #010807; color: #dffdf4; }
+    #assetRecovery[hidden] { display: none !important; }
+    #assetRecovery > div { width: min(520px, 100%); padding: 18px; border: 1px solid rgba(101,255,208,.58); background: #03110e; }
+    #assetRecovery strong { display: block; color: #65ffd0; font-size: 18px; }
+    #assetRecovery p { margin: 10px 0 0; color: #9fcfc2; line-height: 1.55; }
+    #assetRecovery button { width: 100%; margin-top: 16px; padding: 12px 14px; border: 1px solid rgba(101,255,208,.72); background: #062019; color: #dffdf4; font: inherit; font-weight: 700; }
+  </style>
+  <script>
+    globalThis.__FRONTLINE_RELEASE__ = Object.freeze({ version: '0.33.1', directory: 'frontline-roads' });
+    globalThis.__FRONTLINE_STYLES_READY__ = (() => {
+      const release = globalThis.__FRONTLINE_RELEASE__;
+      const projectSegment = location.pathname.split('/').filter(Boolean)[0] ?? '';
+      const projectRoot = projectSegment ? `/${projectSegment}/` : '/';
+      const baseCandidates = [
+        new URL('./src/styles/app.css', location.href),
+        new URL(`${projectRoot}${release.directory}/src/styles/app.css`, location.origin)
+      ];
+      const unique = [...new Map(baseCandidates.map(url => [url.href, url])).values()];
+      const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+      const load = (url, timeoutMs = 5000) => new Promise((resolve, reject) => {
+        const link = document.createElement('link');
+        let settled = false;
+        const finish = (callback, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          callback(value);
+        };
+        const timer = setTimeout(() => {
+          link.remove();
+          finish(reject, new Error(`Stylesheet timed out: ${url}`));
+        }, timeoutMs);
+        link.rel = 'stylesheet';
+        link.dataset.frontlineStyles = 'true';
+        link.onload = () => finish(resolve, link);
+        link.onerror = () => {
+          link.remove();
+          finish(reject, new Error(`Stylesheet failed: ${url}`));
+        };
+        link.href = url;
+        document.head.appendChild(link);
+      });
+      return (async () => {
+        let lastError = null;
+        for (let round = 0; round < 2; round += 1) {
+          for (const candidate of unique) {
+            const url = new URL(candidate.href);
+            url.searchParams.set('v', release.version);
+            if (round > 0) url.searchParams.set('retry', String(Date.now()));
+            try { return await load(url.href); }
+            catch (error) { lastError = error; }
+          }
+          await delay(1200);
+        }
+        throw lastError ?? new Error('Stylesheet could not be loaded.');
+      })();
+    })();
+    globalThis.__FRONTLINE_SHOW_BOOT_RECOVERY__ = message => {
+      const recovery = document.querySelector('#assetRecovery');
+      if (!recovery) return;
+      const detail = recovery.querySelector('p');
+      if (detail && message) detail.textContent = message;
+      recovery.removeAttribute('hidden');
+      recovery.querySelector('button')?.addEventListener('click', () => location.reload(), { once: true });
+    };
+    globalThis.__FRONTLINE_BOOT_TIMER__ = setTimeout(() => {
+      if (document.querySelector('#lifecycleText')?.textContent === 'BOOT') {
+        globalThis.__FRONTLINE_SHOW_BOOT_RECOVERY__('復帰時の読み込みが完了しませんでした。再読み込みすると保存済みのゲームから復帰します。');
+      }
+    }, 12000);
+    globalThis.__FRONTLINE_BOOT_COMPLETE__ = () => {
+      clearTimeout(globalThis.__FRONTLINE_BOOT_TIMER__);
+      globalThis.__FRONTLINE_BOOT_TIMER__ = null;
+    };
+  </script>
+</head>
+<body>
+  <main id="app">
+    <canvas id="mapCanvas" aria-label="道路地図"></canvas>
+
+    <header id="statusBar">
+      <span>FRONTLINE ROADS</span>
+      <span id="lifecycleText">BOOT</span>
+    </header>
+
+    <section id="basePlacementOverlay" class="overlay">
+      <div class="panel">
+        <div class="panelHeader">
+          <p class="eyebrow">RADAR INITIALIZATION // 初回拠点設置</p>
+          <h1>1km以内の道路を直接選択</h1>
+          <p>最初に現在地から1km以内の道路を選び、移動せず開始できます。開始後は実際の移動に合わせて周辺道路を順次取得し、未確認地域をMAPへ追加します。</p>
+        </div>
+        <div id="baseMapViewport" class="baseMapViewport" aria-label="拠点候補道路の選択地図">
+          <div class="baseMapViewportLabel"><span>MAP // ROAD SELECTION</span><small>道路をタップして拠点候補を指定</small></div>
+          <div class="baseMapViewportReticle" aria-hidden="true"></div>
+          <div class="mapControls" aria-label="地図操作">
+            <button id="zoomIn" type="button" aria-label="拡大">＋</button>
+            <button id="zoomOut" type="button" aria-label="縮小">−</button>
+            <button id="recenter" type="button" aria-label="地図を中央へ戻す">◎</button>
+          </div>
+        </div>
+        <div class="panelFooter">
+          <p id="basePlacementStatus" role="status">初期化しています…</p>
+          <button id="confirmBase" class="primary" type="button" disabled>この道路に拠点を設置</button>
+          <button id="retryLocation" class="secondary" type="button">位置情報と道路を再取得</button>
+          <small>正確な移動履歴は保存しません。保存時は道路地図の基準地点を約10m単位へ丸めます。移動先の道路取得時には、その周辺位置を外部道路データサービスへ送信します。</small>
+        </div>
+      </div>
+    </section>
+
+    <section id="playingHud" class="gameUi" hidden>
+      <div class="hudHeader">
+        <div class="combatStats">
+          <span><small>本拠地HP</small><strong id="cityHp">100/100</strong></span>
+          <span><small>敵部隊</small><strong id="enemyCount">0</strong></span>
+          <span><small>文明Lv.</small><strong id="civilizationLevel">0</strong></span>
+        </div>
+        <div class="topActions">
+          <button id="baseCommandButton" type="button">BASES // 拠点</button>
+          <button id="civilizationButton" type="button">CIV // 文明</button>
+          <button id="menuButton" type="button">MENU</button>
+        </div>
+        <div id="resourceSummary" class="resourceSummary" role="group" aria-label="保有資材"></div>
+        <div id="baseSummary" class="baseSummary">拠点設置済み</div>
+        <div id="gameMapControls" class="gameMapControls" aria-label="戦術地図操作">
+          <button id="gameZoomIn" type="button" aria-label="地図を拡大" title="地図を拡大">＋</button>
+          <button id="gameZoomOut" type="button" aria-label="地図を縮小" title="地図を縮小">−</button>
+          <button id="focusSelectedBase" type="button" aria-label="選択中の拠点へ移動" title="選択中の拠点へ移動">拠</button>
+          <button id="focusPlayer" type="button" aria-label="現在地へ移動" title="現在地へ移動">現</button>
+        </div>
+        <div id="storageWarning" class="storageWarning" hidden></div>
+      </div>
+      <aside id="contextPanel" class="contextPanel" hidden>
+        <strong id="contextTitle"></strong>
+        <div id="contextText" class="contextMetrics"></div>
+        <div id="contextActions"></div>
+      </aside>
+      <div id="combatTools" class="combatTools" aria-label="防衛設備"></div>
+    </section>
+
+    <aside id="offlineSummary" class="offlineSummary" hidden>
+      <strong>不在中も世界は進行しました</strong>
+      <p id="offlineText"></p>
+      <button id="offlineClose" type="button">確認</button>
+    </aside>
+
+
+    <section id="baseCommandPanel" class="modalOverlay" hidden aria-label="拠点司令部">
+      <div class="modalCard baseCommandModalCard">
+        <header class="modalHeader"><div><span class="eyebrow">BASE COMMAND</span><h1>拠点司令部</h1></div><button id="closeBaseCommand" type="button">×</button></header>
+        <div id="baseCommandBody" class="modalBody"></div>
+      </div>
+    </section>
+
+    <section id="deploymentPanel" class="modalOverlay deploymentOverlay" hidden aria-label="選択目標への派兵">
+      <div class="modalCard deploymentModalCard">
+        <header class="modalHeader"><div><span class="eyebrow">FIELD OPERATIONS</span><h1 id="deploymentTitle">選択目標への派兵</h1></div><button id="closeDeployment" type="button">×</button></header>
+        <div id="deploymentBody" class="modalBody"></div>
+      </div>
+    </section>
+
+    <section id="civilizationPanel" class="modalOverlay" hidden aria-label="文明と生産">
+      <div class="modalCard civilizationCard">
+        <header class="modalHeader"><div><span class="eyebrow">CIVILIZATION CONTROL</span><h1>文明・資源・生産</h1></div><button id="closeCivilization" type="button">×</button></header>
+        <div id="civilizationBody" class="modalBody"></div>
+      </div>
+    </section>
+
+    <section id="menuPanel" class="modalOverlay" hidden aria-label="メニュー">
+      <div class="modalCard menuCard">
+        <header class="modalHeader"><div><span class="eyebrow">SYSTEM MENU</span><h1>メニュー</h1></div><button id="closeMenu" type="button">×</button></header>
+        <div class="modalBody">
+          <section>
+            <h2>遊び方</h2>
+            <div class="helpGrid">
+              <div><strong>初回拠点</strong><p>現在地から1km以内の道路を直接選び、移動せず即時設置します。</p></div>
+              <div><strong>道路防衛</strong><p>主要拠点・簡易拠点・現在地・出撃中の遠征部隊の範囲内へ設備を置き、敵の経路を誘導します。文明発展による拠点建設圏は段階的に広がりますが上限があり、設置済み施設からは広がりません。</p></div>
+              <div><strong>敵の性格</strong><p>敵は直進、側面迂回、拠点襲撃、施設破壊、部隊追跡、支援など異なる性格で経路と目標を選びます。敵を選択すると性格・作戦・実際の迂回率を確認できます。</p></div>
+              <div><strong>未確認前線</strong><p>MAP端の敵性反応から部隊が侵入します。反応方向へ実際に移動すると道路と情報が追加されます。</p></div>
+              <div><strong>発生源の無力化</strong><p>現地へ到達し、周辺部隊を排除して調査を完了すると、その方向からの新規侵攻が止まります。</p></div>
+              <div><strong>敵への派兵</strong><p>敵拠点を選ぶと拠点攻撃、移動中の敵部隊を選ぶと追跡迎撃を開始できます。迎撃部隊は対象の進路を追い、撃破後は自動帰還します。特殊アイテムは現地40m以内で手動回収するか、回収部隊を送れます。</p></div>
+              <div><strong>文明発展</strong><p>施設・防衛実績・資源納入に加え、現地回収した特殊アイテムで発展します。拠点上限は文明に応じて増加し、Lv.7では主要拠点・簡易拠点とも撤廃されます。</p></div>
+              <div><strong>不在中</strong><p>戦闘・生産・文明建設は同じ規則で最大12時間まで計算されます。</p></div>
+              <div><strong>位置情報</strong><p>正確な移動履歴は保存しません。初期取得と移動先の道路追加時に周辺位置を外部道路データサービスへ送信し、保存時の地図基準点は約10m単位へ丸めます。</p></div>
+            </div>
+          </section>
+          <section class="radarSettings">
+            <h2>レーダー表示</h2>
+            <p class="sectionNote">表示だけを変更します。ゲーム進行やセーブ内容には影響しません。</p>
+            <div class="radarSettingButtons">
+              <button id="radarQualityButton" type="button">表示品質：標準</button>
+              <button id="radarMotionButton" type="button" aria-pressed="true">アニメーション：ON</button>
+              <button id="radarRoutesButton" type="button">敵経路：脅威のみ</button>
+            </div>
+          </section>
+          <button id="manualSave" class="wideButton" type="button">現在の状態を保存</button>
+          <button id="menuReset" class="wideButton danger" type="button">ゲームを完全初期化</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="notification" class="notification" role="status"></div>
+    <footer>開発版 <span id="versionText"></span></footer>
+  </main>
+  <aside id="assetRecovery" hidden role="alert">
+    <div><strong>表示データを読み込めませんでした</strong><p>通信状態を確認して再読み込みしてください。ゲームのセーブデータは削除されません。</p><button type="button">保存済みゲームを再読み込み</button></div>
+  </aside>
+  <script type="module">
+    const release = globalThis.__FRONTLINE_RELEASE__;
+    const projectSegment = location.pathname.split('/').filter(Boolean)[0] ?? '';
+    const projectRoot = projectSegment ? `/${projectSegment}/` : '/';
+    const baseCandidates = [
+      new URL('./src/app/bootstrap.js', location.href),
+      new URL(`${projectRoot}${release.directory}/src/app/bootstrap.js`, location.origin)
+    ];
+    const unique = [...new Map(baseCandidates.map(url => [url.href, url])).values()];
+    const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+    const withTimeout = (promise, timeoutMs, label) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+    });
+    async function importApplication() {
+      let lastError = null;
+      for (let round = 0; round < 2; round += 1) {
+        for (const candidate of unique) {
+          const url = new URL(candidate.href);
+          url.searchParams.set('v', release.version);
+          if (round > 0) url.searchParams.set('retry', String(Date.now()));
+          try { return await withTimeout(import(url.href), 7000, 'Application module'); }
+          catch (error) { lastError = error; }
+        }
+        await delay(500);
+      }
+      throw lastError ?? new Error('Application module could not be loaded.');
+    }
+    try {
+      await withTimeout(globalThis.__FRONTLINE_STYLES_READY__, 12000, 'Stylesheet');
+      await importApplication();
+    } catch (error) {
+      console.error('FRONTLINE ROADS asset recovery failed', error);
+      globalThis.__FRONTLINE_SHOW_BOOT_RECOVERY__?.('復帰時の表示データを読み込めませんでした。再読み込みすると保存済みのゲームから復帰します。');
+    }
+  </script>
+</body>
+</html>
